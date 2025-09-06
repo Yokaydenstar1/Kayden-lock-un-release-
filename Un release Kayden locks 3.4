@@ -1,0 +1,280 @@
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+
+-- Draggable UI function
+function MakeDraggable(guiObject)
+    local dragging, dragInput, dragStart, startPos
+    local function update(input)
+        local delta = input.Position - dragStart
+        guiObject.Position = UDim2.new(
+            startPos.X.Scale, startPos.X.Offset + delta.X,
+            startPos.Y.Scale, startPos.Y.Offset + delta.Y
+        )
+    end
+    guiObject.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 
+        or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = guiObject.Position
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                end
+            end)
+        end
+    end)
+    guiObject.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement 
+        or input.UserInputType == Enum.UserInputType.Touch then
+            dragInput = input
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if input == dragInput and dragging then
+            update(input)
+        end
+    end)
+end
+
+-- Create UI
+function CreateUI()
+    local ScreenGui = Instance.new("ScreenGui")
+    ScreenGui.Name = "KaydenLockGui"
+    ScreenGui.Parent = game.CoreGui
+    ScreenGui.ResetOnSpawn = false
+
+    local MainContainer = Instance.new("Frame")
+    MainContainer.Size = UDim2.new(0, 160, 0, 70)
+    MainContainer.Position = UDim2.new(0, 15, 0, 15)
+    MainContainer.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+    MainContainer.BorderSizePixel = 0
+    MainContainer.Parent = ScreenGui
+    MakeDraggable(MainContainer)
+
+    local TopMessage = Instance.new("TextLabel")
+    TopMessage.Size = UDim2.new(1, 0, 0, 20)
+    TopMessage.Position = UDim2.new(0, 0, 0, -25)
+    TopMessage.BackgroundTransparency = 1
+    TopMessage.Text = "Kayden Lock Active"
+    TopMessage.TextColor3 = Color3.fromRGB(0, 170, 255)
+    TopMessage.Font = Enum.Font.GothamBold
+    TopMessage.TextSize = 16
+    TopMessage.Parent = MainContainer
+
+    local LockButton = Instance.new("TextButton")
+    LockButton.Size = UDim2.new(1, -10, 1, -10)
+    LockButton.Position = UDim2.new(0, 5, 0, 5)
+    LockButton.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+    LockButton.Text = "Kayden Lock"
+    LockButton.TextColor3 = Color3.fromRGB(0, 170, 255)
+    LockButton.Font = Enum.Font.GothamBlack
+    LockButton.TextSize = 18
+    LockButton.Parent = MainContainer
+
+    local ButtonGradient = Instance.new("UIGradient")
+    ButtonGradient.Color = ColorSequence.new{
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(0, 200, 255)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(0, 120, 200))
+    }
+    ButtonGradient.Rotation = 90
+    ButtonGradient.Parent = LockButton
+
+    local Glow = Instance.new("UIStroke")
+    Glow.Color = Color3.fromRGB(0, 200, 255)
+    Glow.Thickness = 2.5
+    Glow.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    Glow.Parent = LockButton
+
+    RunService.RenderStepped:Connect(function()
+        local pulse = math.sin(tick() * 3) * 0.5 + 1
+        Glow.Thickness = 2 + (pulse * 1.5)
+    end)
+
+    local LockSymbol = Instance.new("ImageLabel")
+    LockSymbol.Size = UDim2.new(0, 40, 0, 40)
+    LockSymbol.AnchorPoint = Vector2.new(0.5, 0.5)
+    LockSymbol.BackgroundTransparency = 1
+    LockSymbol.Image = "rbxassetid://11305923967"
+    LockSymbol.ImageColor3 = Color3.fromRGB(0, 200, 255)
+    LockSymbol.Visible = false
+    LockSymbol.Parent = ScreenGui
+    MakeDraggable(LockSymbol)
+
+    -- Highlight for wall-through visualization
+    local highlight = Instance.new("Highlight")
+    highlight.FillColor = Color3.fromRGB(255, 0, 0)
+    highlight.OutlineColor = Color3.fromRGB(255, 0, 0)
+    highlight.OutlineTransparency = 0
+    highlight.FillTransparency = 0.5
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop -- see through walls
+    highlight.Adornee = nil
+    highlight.Enabled = false
+    highlight.Parent = game:GetService("CoreGui")
+
+    -- Lock state variables
+    local LockEnabled = false
+    local LockedOnTarget = nil
+    local ControllerArmed = false
+
+    -- Find nearest target
+    local function FindTargetInCrosshair()
+        local closest, closestDist = nil, math.huge
+        local screenCenter = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("Head") then
+                local headPos, onScreen = Camera:WorldToViewportPoint(player.Character.Head.Position)
+                if onScreen then
+                    local dist = (screenCenter - Vector2.new(headPos.X, headPos.Y)).Magnitude
+                    if dist < closestDist then
+                        closest, closestDist = player, dist
+                    end
+                end
+            end
+        end
+
+        if not closest then
+            LockedOnTarget = nil
+            LockButton.Text = "there is no one here nigga"
+            TopMessage.Text = "there is no one here nigga"
+        end
+
+        return closest
+    end
+
+    -- Render loop for RGB, movement, and highlight
+    local pulseTime = 0
+    local shakeAmplitude = 3
+    RunService.RenderStepped:Connect(function(dt)
+        pulseTime = pulseTime + dt * 3
+
+        -- Target logic
+        if LockEnabled then
+            if LockedOnTarget and LockedOnTarget.Character and LockedOnTarget.Character:FindFirstChild("Humanoid") then
+                local char = LockedOnTarget.Character
+                local hum = char.Humanoid
+                if hum.Health <= 0 then
+                    LockedOnTarget = nil
+                    LockSymbol.Visible = false
+                    LockButton.Text = "there is no one here nigga"
+                    TopMessage.Text = "Target Lost"
+                else
+                    local head = char:FindFirstChild("Head")
+                    if head then
+                        local screenPos = Camera:WorldToViewportPoint(head.Position)
+                        Camera.CFrame = CFrame.new(Camera.CFrame.Position, head.Position)
+                        LockSymbol.Position = UDim2.new(0, screenPos.X, 0, screenPos.Y - 50)
+                        LockSymbol.Visible = true
+                        LockButton.Text = "🔒 " .. LockedOnTarget.Name
+                        TopMessage.Text = "Locked On: " .. LockedOnTarget.Name
+                    end
+                end
+            else
+                LockedOnTarget = nil
+                LockSymbol.Visible = false
+                LockButton.Text = "there is no one here nigga"
+                TopMessage.Text = "there is no one here nigga"
+            end
+        end
+
+        -- RGB calculation
+        local r = (math.sin(pulseTime) * 0.5 + 0.5)
+        local g = (math.sin(pulseTime + 2) * 0.5 + 0.5)
+        local b = (math.sin(pulseTime + 4) * 0.5 + 0.5)
+        local color = Color3.new(r, g, b)
+
+        -- Movement logic: move if locking or showing message
+        local shouldMove = LockedOnTarget or LockButton.Text == "there is no one here nigga"
+
+        if shouldMove then
+            LockButton.TextColor3 = color
+            TopMessage.TextColor3 = color
+            LockSymbol.ImageColor3 = color
+            Glow.Color = color
+            LockButton.BackgroundColor3 = color:lerp(Color3.new(0,0,0),0.8)
+
+            local offsetX = math.sin(pulseTime * 5) * shakeAmplitude
+            local offsetY = math.cos(pulseTime * 5) * shakeAmplitude
+            LockButton.Position = UDim2.new(0, 5 + offsetX, 0, 5 + offsetY)
+        else
+            LockButton.TextColor3 = color
+            TopMessage.TextColor3 = color
+            LockSymbol.ImageColor3 = color
+            Glow.Color = color
+            LockButton.BackgroundColor3 = Color3.fromRGB(25,25,25)
+            LockButton.Position = UDim2.new(0, 5, 0, 5)
+        end
+
+        -- Highlight logic (pulse + always on top)
+        if LockedOnTarget and LockedOnTarget.Character then
+            highlight.Adornee = LockedOnTarget.Character
+            highlight.Enabled = true
+            highlight.FillColor = color
+            highlight.OutlineColor = color
+            highlight.FillTransparency = 0.3 + 0.2 * math.sin(tick() * 5) -- pulsing effect
+        else
+            highlight.Enabled = false
+            highlight.Adornee = nil
+        end
+    end)
+
+    -- Toggle lock
+    local function ToggleLock()
+        LockEnabled = not LockEnabled
+        if LockEnabled then
+            LockButton.Text = "Locking..."
+            TopMessage.Text = "Lock Enabled"
+            if not ControllerArmed then
+                LockedOnTarget = FindTargetInCrosshair()
+            end
+        else
+            LockedOnTarget = nil
+            LockButton.Text = "Kayden Lock"
+            TopMessage.Text = "Kayden Lock Active"
+            LockSymbol.Visible = false
+        end
+    end
+
+    LockButton.MouseButton1Click:Connect(ToggleLock)
+
+    -- Keyboard Q to confirm lock
+    UserInputService.InputBegan:Connect(function(input, processed)
+        if processed then return end
+        if input.KeyCode == Enum.KeyCode.Q then
+            if ControllerArmed then
+                ControllerArmed = false
+                LockedOnTarget = FindTargetInCrosshair()
+                LockEnabled = true
+                LockButton.Text = "Locking..."
+                TopMessage.Text = "Lock Enabled"
+            else
+                ToggleLock()
+            end
+        end
+    end)
+
+    -- Controller arming
+    UserInputService.InputBegan:Connect(function(input, processed)
+        if processed then return end
+        if input.UserInputType == Enum.UserInputType.Gamepad1 
+        and input.KeyCode == Enum.KeyCode.Thumbstick1 then
+            ControllerArmed = not ControllerArmed
+            TopMessage.Text = ControllerArmed and "Controller Armed: Press Q to Lock" or "Kayden Lock Active"
+        end
+    end)
+
+    -- Player leaving
+    Players.PlayerRemoving:Connect(function(player)
+        if LockedOnTarget == player then
+            LockedOnTarget = nil
+            LockSymbol.Visible = false
+            LockButton.Text = "there is no one here nigga"
+            TopMessage.Text = "Target Left"
+        end
+    end)
+end
+
+CreateUI()
